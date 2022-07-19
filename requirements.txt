@@ -1,0 +1,9 @@
+numpy
+tqdm
+opencv-python
+matplotlib
+torch
+torchvision
+torchinfo
+torchmetrics
+yacs

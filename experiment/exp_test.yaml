@@ -1,0 +1,19 @@
+data:
+  #pattern: "E:/Data/NR121214-01/*.bmp"
+  pattern:
+    - "data/PS400_5wt/*.bmp"
+#    - "E:/Data/NR121214-01/*.bmp"
+#    - "E:/Data/Kaggle/MARCO/extracted/*.jpg"
+#    - "E:/Data/Kaggle/crystal-microscopics-images-and-annotations/extracted/*image.png"
+  images:
+    size: 512
+training:
+  batch_size: 8
+  plot_every: 10
+  n_epochs: 1000
+  sched:
+    kind: none
+  opt:
+    adam:
+      lr: 3e-3
+expname: test

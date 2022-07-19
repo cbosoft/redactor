@@ -1,0 +1,7 @@
+.idea
+.env
+training_results
+data
+.DS_Store
+__pycache__
+*.pyc
