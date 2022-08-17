@@ -25,11 +25,19 @@ def cached_imread(fn):
 
 class AutoAnnotatedImagesDataset(Dataset):
 
-    def __init__(self, tfms, filenames: List[str], image_size: Tuple[int, int]):
+    COLOUR_METHODS = {'grayscale', 'white_fg', 'black_fg', 'white_or_black_fg', 'image_inverse'}
+    CHARS = list(string.digits+string.ascii_letters)
+
+    def __init__(self, tfms, filenames: List[str], image_size: Tuple[int, int],
+                 colour_method: str, bg_chance: float, epoch_size=100):
         self.transforms = tfms
         self.filenames = filenames
         self.image_size = image_size
         assert len(filenames), 'No filenames supplied to dataset!'
+        assert colour_method in self.COLOUR_METHODS, f'Colour method "{colour_method}" not valid (should be one of {self.COLOUR_METHODS})'
+        self.colour_method = colour_method
+        self.bg_chance = bg_chance
+        self.epoch_size = epoch_size
 
     @classmethod
     def from_config(cls, cfg: CfgNode):
@@ -38,7 +46,9 @@ class AutoAnnotatedImagesDataset(Dataset):
             filenames.extend(glob(pattern))
         tfms = cls.init_transforms(cfg)
         sz = cfg.data.images.size
-        return cls(tfms, filenames, (sz, sz))
+        colour_method = cfg.data.gen.colour_method
+        bg_chance = cfg.data.gen.bg_chance
+        return cls(tfms, filenames, (sz, sz), colour_method, bg_chance)
 
     @staticmethod
     def init_transforms(cfg: CfgNode):
@@ -52,14 +62,29 @@ class AutoAnnotatedImagesDataset(Dataset):
         tfms = [*init_tfms, *augmentations, *final_tfms]
         return transforms.Compose(tfms)
 
-    @staticmethod
-    def get_random_string():
-        return ''.join([np.random.choice(list(string.printable[:-6])) for _ in range(np.random.randint(3, 10))])
-
     @classmethod
-    def add_random_annotation(cls, im, w, h):
+    def get_random_string(cls):
+        return ''.join([
+            np.random.choice(cls.CHARS)
+            for _ in range(np.random.randint(3, 30))
+        ])
+
+    def get_fg_bg_colour(self, image_mean) -> Tuple[int, int]:
+
+        fg = dict(
+            grayscale=lambda: np.random.randint(0, 255),
+            white_or_black_fg=lambda: int(np.random.randint(0, 1)*255),
+            black_fg=lambda: 0,
+            white_fg=lambda: 255,
+            image_inverse=lambda: 255 - image_mean,
+        )[self.colour_method]()
+
+        bg = 255 - fg if np.random.uniform() < self.bg_chance else -1
+        return fg, bg
+
+    def add_random_annotation(self, im, w, h):
         font_kws = dict(
-            text=cls.get_random_string(),
+            text=self.get_random_string(),
             fontFace=np.random.choice([
                 cv2.FONT_HERSHEY_SIMPLEX,
                 cv2.FONT_HERSHEY_PLAIN,
@@ -71,8 +96,8 @@ class AutoAnnotatedImagesDataset(Dataset):
                 cv2.FONT_HERSHEY_SCRIPT_COMPLEX,
                 cv2.FONT_ITALIC,
             ]),
-            fontScale=np.random.uniform(1, 5),
-            thickness=np.random.randint(1, 4)
+            fontScale=np.random.uniform(0.1, 5),
+            thickness=np.random.randint(1, 10)
         )
 
         (sw, sh), _ = cv2.getTextSize(**font_kws)
@@ -86,16 +111,27 @@ class AutoAnnotatedImagesDataset(Dataset):
             y = h - sh
 
         mx, my = 10, 15
-        if np.random.uniform() < 0.5 or True:
-            c = np.random.randint(0, 255)
-            ci = 255 - c
-            cv2.rectangle(im, (x - mx, y + my), (x + sw + mx, y - sh - my), thickness=-1, color=ci)
-        else:
-            mnc = im[y:y - sh, x:x + sw].mean()
-            c = 255 if mnc < 127 else 0
+        x0, y0 = x - mx, y - sh - my
+        x1, y1 = x + sw + mx, y + my
 
-        cv2.putText(im, org=(x, y), color=c, **font_kws)
-        bbox = x0, y0, x1, y1 = (x - mx), (y - sh - my), (x + sw + mx), (y + my)
+        x0 = min(w-1, x0)
+        x1 = min(w-1, x1)
+        y0 = min(h-1, y0)
+        y1 = min(h-1, y1)
+
+        x0 = max(0, x0)
+        x1 = max(0, x1)
+        y0 = max(0, y0)
+        y1 = max(0, y1)
+
+        image_mean = int(im[y0:y1, x0:x1].astype(float).mean())
+
+        fg, bg = self.get_fg_bg_colour(image_mean)
+
+        if bg > 0:
+            cv2.rectangle(im, (x0, y0), (x1, y1), thickness=-1, color=bg)
+        cv2.putText(im, org=(x, y), color=fg, **font_kws)
+        bbox = x0, y0, x1, y1  # = (x - mx), (y - sh - my), (x + sw + mx), (y + my)
         bw, bh = abs(x1 - x0), abs(y1 - y0)
         area = bw * bh
         target = dict(
@@ -106,9 +142,8 @@ class AutoAnnotatedImagesDataset(Dataset):
         )
         return target
 
-    @classmethod
-    def get_annotated(cls, fn: str, sz):
-        im = cached_imread(fn)
+    def get_annotated(self, fn: str, sz):
+        im = cached_imread(fn).copy()
         h, w = im.shape
         if sz is None:
             sz = w, h
@@ -120,7 +155,7 @@ class AutoAnnotatedImagesDataset(Dataset):
         iscrowd = list()
         n = np.random.randint(1, 5)
         for i in range(n):
-            a_target = cls.add_random_annotation(im, w, h)
+            a_target = self.add_random_annotation(im, w, h)
             boxes.append(a_target['boxes'])
             labels.append(a_target['labels'])
             image_id.append(123)
@@ -149,10 +184,14 @@ class AutoAnnotatedImagesDataset(Dataset):
         return torch.tensor(np.reshape(im, (1, sz[1], sz[0]))) / 255., target
 
     def __len__(self):
-        return len(self.filenames)
+        return min(len(self.filenames), self.epoch_size)
 
     def __getitem__(self, i: int):
-        return self.get_annotated(self.filenames[i], self.image_size)
+        if len(self.filenames) <= self.epoch_size:
+            fn = self.filenames[i]
+        else:
+            fn = np.random.choice(self.filenames)
+        return self.get_annotated(fn, self.image_size)
 
     @classmethod
     def build_loaders(cls, config):

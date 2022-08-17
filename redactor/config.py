@@ -47,6 +47,20 @@ def get_config() -> CfgNode:
     config.data.images.stack = 5
     config.data.images.lazy_load = False  # whether to keep all images in memory during training or to 'lazy load' them on the fly
 
+    # items related to generating new data.
+    config.data.gen = CfgNode()
+
+    # How to decide colour of generated text?
+    # - 'grayscale': random grayscale foreground
+    # - 'black_or_white_fg': foreground colour is either black or white
+    # - 'black_fg', 'white_fg': foreground colour is black or white respectively
+    # - 'image_inverse': fg is opposite of (255 minus) mean of image
+    # background is always 255 - foreground, or not present
+    config.data.gen.colour_method = 'grayscale'
+
+    # Chance that the added text has a solid background
+    config.data.gen.bg_chance = 0.5
+
     config.training = CfgNode()
     config.training.n_epochs = 1_000
 
