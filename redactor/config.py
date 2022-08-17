@@ -14,16 +14,25 @@ def get_config() -> CfgNode:
 
     config.model = CfgNode()
     config.model.dropout_frac = 0.0
-
-    config.model.architecture = 'ResNet'
     config.model.seed = None
     config.model.use_custom_weight_init = True
-    config.model.n_output_bins = 100
-
-    config.model.resnet = CfgNode()
-    config.model.resnet.n = 18  # can be [18, 34, 50, 101, 152] for image resnet
-    config.model.resnet.zero_init_residual = True
     config.model.weights = None  # Optional[str], optionally load weights at state file specified
+
+    config.model.n_classes = 2  # background + object, always one more than you think!
+    config.model.backbone = CfgNode()
+    config.model.backbone.kind = 'resnet'
+    config.model.backbone.pretrained = True
+
+    # Optional string (python code) defining the layers to be returned by the backbone. Should eval to list of int.
+    # e.g. 'list(range(1, 5))' -> [1, 2, 3, 4]
+    config.model.backbone.returned_layers = None
+
+    # How many layers should be trainable? The rest are frozen.
+    config.model.backbone.trainable_layers = 2
+
+    # ResNet specific backbone settings
+    config.model.backbone.resnet = CfgNode()
+    config.model.backbone.resnet.n = 18
 
     config.data = CfgNode()
     config.data.root = 'data'
@@ -128,7 +137,7 @@ def finalise(config: CfgNode):
     _today = today()
 
     config.output_dir = ensure_dir(config.output_dir.format(
-        today=_today, architecture=config.model.architecture,
+        today=_today, architecture=f'FasterRCNN-{config.model.backbone.kind}',
         grouping=config.group.format(today=_today),
         expname=config.expname
     ))
