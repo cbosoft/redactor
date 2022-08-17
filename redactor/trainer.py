@@ -5,6 +5,7 @@ import json
 import matplotlib.pyplot as plt
 import torch
 import numpy as np
+import cv2
 
 from torchinfo import summary
 
@@ -112,7 +113,7 @@ class Trainer:
         #     self.plotter.init()
 
         with torch.no_grad():
-            for inp, tgt in dataloader:
+            for i, (inp, tgt) in enumerate(dataloader):
                 # inp = inp.to(self.device)
                 # tgt = tgt.to(self.device)
                 self.model.train()
@@ -126,8 +127,44 @@ class Trainer:
 
                 store.add_scalar(f'loss.per_batch.{valid_or_test}', self.vbn, _loss / len(inp))
 
-                # self.model.eval()
-                # out = self.model(inp)
+                if i == 0:
+                    self.model.eval()
+                    out = self.model(inp)
+
+                    # Qualitative appraisal
+                    for j, (img, res, goal) in enumerate(zip(inp, out, tgt)):
+
+                        if j >= 1:
+                            break
+
+                        img = (img.detach().cpu().numpy()*255).astype('uint8')[0]
+                        h, w = img.shape
+                        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+                        for box in res['boxes']:
+                            box = box.detach().cpu().numpy().astype(int)
+                            x0, y0, x1, y1 = box
+
+                            x0 = min(w-1, x0)
+                            x1 = min(w-1, x1)
+                            y0 = min(h-1, y0)
+                            y1 = min(h-1, y1)
+
+                            x0 = max(0, x0)
+                            x1 = max(0, x1)
+                            y0 = max(0, y0)
+                            y1 = max(0, y1)
+
+                            img = cv2.rectangle(img, (x0, y0), (x1, y1), (255, 0, 0), 3)
+
+                        for box in goal['boxes']:
+                            box = box.detach().cpu().numpy().astype('uint8')
+                            x0, y0, x1, y1 = box
+                            img = cv2.rectangle(img, (x0, y0), (x1, y1), (0, 255, 0), 1)
+
+                        cv2.imwrite(f'{self.output_dir}/{self.prefix}qual_{j}_epoch={self.i}.jpg', img)
+
+
                 # for metric_name, metric_func in self.metrics.items():
                 #     for o, t, tag in zip(out, tgt):
                 #         metric_value = metric_func(o, t)
